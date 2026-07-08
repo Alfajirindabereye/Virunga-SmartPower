@@ -1,6 +1,0 @@
-{
-  "name": "Gestion Cashpower Virunga Energies",
-  "description": "Application web de monitoring, de recharge par Mobile Money et de gestion automatisée de la consommation pour les abonnés prépayés de Virunga Energies.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
