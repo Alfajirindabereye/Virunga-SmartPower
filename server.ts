@@ -5,9 +5,34 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import nodemailer from "nodemailer";
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAIL_FIELD = 100_000;
+const MAX_PROMPT_LEN = 10_000;
+
+function isNonEmptyString(value: unknown, maxLen: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLen;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" && value !== null && !Array.isArray(value)
+  );
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Do not leak the framework/version in response headers.
+  app.disable("x-powered-by");
+
+  // Basic security headers (no extra dependency required).
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    next();
+  });
 
   // Middleware to parse JSON with generous size limit for ID card photo uploads
   app.use(express.json({ limit: "15mb" }));
@@ -20,11 +45,24 @@ async function startServer() {
 
   // POST Route to send alert email via Gmail SMTP (or simulate if not configured)
   app.post("/api/send-email", async (req, res) => {
-    const { to, subject, htmlText } = req.body;
+    const { to, subject, htmlText } = req.body ?? {};
 
     if (!to || !subject || !htmlText) {
       return res.status(400).json({
         error: "Missing required email fields: to, subject, htmlText",
+      });
+    }
+
+    if (
+      typeof to !== "string" ||
+      !EMAIL_REGEX.test(to) ||
+      to.length > 254 ||
+      !isNonEmptyString(subject, 998) ||
+      !isNonEmptyString(htmlText, MAX_EMAIL_FIELD)
+    ) {
+      return res.status(400).json({
+        error:
+          "Invalid email payload: 'to' must be a valid email address and 'subject'/'htmlText' must be non-empty strings within size limits.",
       });
     }
 
@@ -98,6 +136,11 @@ async function startServer() {
 
   // POST State to Database
   app.post("/api/state", async (req, res) => {
+    if (!isPlainObject(req.body)) {
+      return res.status(400).json({
+        error: "Invalid state payload: expected a JSON object.",
+      });
+    }
     try {
       await fs.writeFile(DB_FILE, JSON.stringify(req.body, null, 2), "utf-8");
       res.json({ success: true });
@@ -117,7 +160,23 @@ async function startServer() {
         });
       }
 
-      const { prompt, meterState, history = [] } = req.body;
+      const { prompt, meterState, history = [] } = req.body ?? {};
+
+      if (prompt !== undefined && !isNonEmptyString(prompt, MAX_PROMPT_LEN)) {
+        return res.status(400).json({
+          error: `Invalid 'prompt': must be a non-empty string up to ${MAX_PROMPT_LEN} characters.`,
+        });
+      }
+      if (!Array.isArray(history) || history.length > 100) {
+        return res.status(400).json({
+          error: "Invalid 'history': must be an array of at most 100 messages.",
+        });
+      }
+      if (meterState !== undefined && !isPlainObject(meterState)) {
+        return res.status(400).json({
+          error: "Invalid 'meterState': must be an object.",
+        });
+      }
 
       // Initialize GoogleGenAI inside the route (lazy loading)
       const ai = new GoogleGenAI({
@@ -150,10 +209,15 @@ Réponds en Français, de manière concise, engageante et structurée avec du Ma
 
       // Map chat history to the structure expected by the SDK
       const contents = [
-        ...history.map((msg: any) => ({
-          role: msg.role === "assistant" ? "model" : "user",
-          parts: [{ text: msg.text }],
-        })),
+        ...history
+          .filter(
+            (msg: unknown): msg is { role?: string; text: string } =>
+              isPlainObject(msg) && typeof msg.text === "string",
+          )
+          .map((msg) => ({
+            role: msg.role === "assistant" ? "model" : "user",
+            parts: [{ text: msg.text }],
+          })),
         {
           role: "user",
           parts: [
