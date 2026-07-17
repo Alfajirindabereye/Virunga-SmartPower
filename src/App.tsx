@@ -38,52 +38,27 @@ import {
   Bar,
   Legend,
 } from "recharts";
-
-// Interfaces
-interface Appliance {
-  id: string;
-  name: string;
-  watts: number;
-  active: boolean;
-  category: "essential" | "heavy";
-  icon: string;
-  description: string;
-}
-
-interface TokenHistory {
-  id: string;
-  date: string;
-  amountUsd: number;
-  kwh: number;
-  token: string;
-  operator: string;
-  phone: string;
-  applied: boolean;
-}
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  timestamp: string;
-}
-
-interface AppNotification {
-  id: string;
-  type: "critical" | "warning" | "info" | "success";
-  title: string;
-  message: string;
-  timestamp: string;
-  read: boolean;
-  category: "low_credit" | "shedding" | "system" | "recharge";
-}
-
-interface ActiveToast {
-  id: string;
-  type: "critical" | "warning" | "info" | "success";
-  title: string;
-  message: string;
-}
+import type {
+  Appliance,
+  TokenHistory,
+  ChatMessage,
+  AppNotification,
+  ActiveToast,
+  NotificationType,
+  NotificationCategory,
+} from "./types";
+import {
+  formatTime,
+  formatDateTime,
+  onlyDigits,
+  formatTokenString,
+  stripTokenSeparators,
+  generateRandomToken,
+  kwhToUsd,
+  usdToKwh,
+  createChatMessage,
+  playAlertSound,
+} from "./utils";
 
 export default function App() {
   // 1. Core Meter States
@@ -345,22 +320,12 @@ export default function App() {
   const [manualTokenError, setManualTokenError] = useState<string>("");
   const [manualTokenSuccess, setManualTokenSuccess] = useState<boolean>(false);
 
-  // Format token as XXXX-XXXX-XXXX-XXXX-XXXX automatically
-  const formatTokenString = (rawVal: string) => {
-    const digitsOnly = rawVal.replace(/\D/g, "").slice(0, 20);
-    const segments = [];
-    for (let i = 0; i < digitsOnly.length; i += 4) {
-      segments.push(digitsOnly.slice(i, i + 4));
-    }
-    return segments.join("-");
-  };
-
   const handleManualTokenInputChange = (val: string) => {
     setManualTokenInput(formatTokenString(val));
   };
 
   const handleKeypadPress = (key: string) => {
-    let digitsOnly = manualTokenInput.replace(/\D/g, "");
+    let digitsOnly = onlyDigits(manualTokenInput);
     if (key === "←") {
       digitsOnly = digitsOnly.slice(0, -1);
     } else if (key === "Effacer") {
@@ -423,10 +388,7 @@ export default function App() {
       id: "welcome",
       role: "assistant",
       text: "Bonjour ! Je suis **Éco-Conseiller Virunga**, votre assistant intelligent de gestion électrique.\n\nJe suis connecté en temps réel à votre compteur prépayé de Goma. Je peux vous conseiller pour prolonger votre crédit Cashpower, planifier vos appareils à forte consommation (comme votre chauffe-eau de 2000W), et vous montrer comment votre consommation hydroélectrique sauve les forêts du Parc National des Virunga contre le charbon 'makala'.\n\nQue souhaitez-vous savoir aujourd'hui ?",
-      timestamp: new Date().toLocaleTimeString("fr-FR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      timestamp: formatTime(),
     },
   ]);
 
@@ -470,89 +432,14 @@ export default function App() {
     "all",
   );
 
-  const playAlertSound = (
-    type: "critical" | "warning" | "success" | "info",
-  ) => {
-    try {
-      const AudioContextClass =
-        window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-      const ctx = new AudioContextClass();
-
-      if (type === "critical") {
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        osc.type = "sawtooth";
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.setValueAtTime(440, ctx.currentTime + 0.15);
-        gainNode.gain.setValueAtTime(0.08, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.3);
-      } else if (type === "warning") {
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
-        gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(
-          0.01,
-          ctx.currentTime + 0.25,
-        );
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.25);
-      } else if (type === "success") {
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-        osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1);
-        osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.2);
-        gainNode.gain.setValueAtTime(0.08, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(
-          0.01,
-          ctx.currentTime + 0.35,
-        );
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.35);
-      } else {
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(659.25, ctx.currentTime);
-        gainNode.gain.setValueAtTime(0.06, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(
-          0.01,
-          ctx.currentTime + 0.15,
-        );
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.15);
-      }
-    } catch (e) {
-      console.warn("AudioContext standard error or blocked:", e);
-    }
-  };
-
   const addNotification = (
-    type: "critical" | "warning" | "info" | "success",
+    type: NotificationType,
     title: string,
     message: string,
-    category: "low_credit" | "shedding" | "system" | "recharge",
+    category: NotificationCategory,
   ) => {
     const id = `notif_${Date.now()}`;
-    const now = new Date();
-    const timestamp = now.toLocaleTimeString("fr-FR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const timestamp = formatTime();
 
     const newNotif: AppNotification = {
       id,
@@ -721,7 +608,7 @@ export default function App() {
         `<h3 style="color: #d97706; margin: 0 0 12px 0;">Attention : Votre solde d'électricité est critique !</h3>
          <p>Cher(e) abonnée <strong>${profileName}</strong>,</p>
          <p>Nous attirons votre attention sur le fait que le crédit de votre compteur prépayé est descendu sous votre seuil d'alerte configuré de <strong>${alertThreshold.toFixed(1)} kWh</strong>.</p>
-         <p>Solde actuel : <strong style="font-size: 18px; color: #d97706; font-family: monospace;">${balanceKwh.toFixed(2)} kWh</strong> (environ $${(balanceKwh * selectedTariff.usdPerKwh).toFixed(2)}).</p>
+         <p>Solde actuel : <strong style="font-size: 18px; color: #d97706; font-family: monospace;">${balanceKwh.toFixed(2)} kWh</strong> (environ $${kwhToUsd(balanceKwh, selectedTariff.usdPerKwh).toFixed(2)}).</p>
          <p>Veuillez recharger dès que possible pour éviter d'être plongé(e) dans le noir de manière inopinée.</p>`,
       );
     } else if (balanceKwh > alertThreshold && prev <= alertThreshold) {
@@ -880,15 +767,11 @@ export default function App() {
         );
 
         // Add notification event inside AI advisor logs or alert
-        const alertMsg: ChatMessage = {
-          id: `shedding_${Date.now()}`,
-          role: "assistant",
-          text: `🚨 **Délestage Intelligent Activé automatiquement !**\n\nVotre solde actuel (${balanceKwh.toFixed(2)} kWh) est descendu en dessous de votre seuil d'alerte de **${alertThreshold} kWh**.\n\nPour éviter une coupure totale d'électricité, les appareils lourds actifs (*Chauffe-eau, Plaque de cuisson, Fer à Repasser*) ont été coupés automatiquement. Vos charges essentielles (Éclairage LED, Réfrigérateur) restent alimentées pour maximiser la durée de vos unités restantes !`,
-          timestamp: new Date().toLocaleTimeString("fr-FR", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        };
+        const alertMsg = createChatMessage(
+          "assistant",
+          `🚨 **Délestage Intelligent Activé automatiquement !**\n\nVotre solde actuel (${balanceKwh.toFixed(2)} kWh) est descendu en dessous de votre seuil d'alerte de **${alertThreshold} kWh**.\n\nPour éviter une coupure totale d'électricité, les appareils lourds actifs (*Chauffe-eau, Plaque de cuisson, Fer à Repasser*) ont été coupés automatiquement. Vos charges essentielles (Éclairage LED, Réfrigérateur) restent alimentées pour maximiser la durée de vos unités restantes !`,
+          "shedding",
+        );
         setChatMessages((prev) => [...prev, alertMsg]);
       }
     } else if (balanceKwh > alertThreshold) {
@@ -996,12 +879,7 @@ export default function App() {
     setTimeout(() => {
       setIsProcessingPayment(false);
       // Generate a random 20-digit token segmented by dashes
-      const segments = [];
-      for (let i = 0; i < 5; i++) {
-        segments.push(Math.floor(1000 + Math.random() * 9000).toString());
-      }
-      const token = segments.join("-");
-      setGeneratedToken(token);
+      setGeneratedToken(generateRandomToken());
       setPaymentStep(3); // Success page with Token
     }, 3000);
   };
@@ -1026,19 +904,13 @@ export default function App() {
       // Applying newly generated token
       const finalAmount = rechargeAmountUsd || parseFloat(customAmountUsd);
       addedKwh = parseFloat(
-        (finalAmount / selectedTariff.usdPerKwh).toFixed(1),
+        usdToKwh(finalAmount, selectedTariff.usdPerKwh).toFixed(1),
       );
 
       // Add transaction to history
       const newTx: TokenHistory = {
         id: `token_${Date.now()}`,
-        date: new Date().toLocaleString("fr-FR", {
-          hour: "2-digit",
-          minute: "2-digit",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        }),
+        date: formatDateTime(),
         amountUsd: finalAmount,
         kwh: addedKwh,
         token: tokenStr,
@@ -1063,15 +935,11 @@ export default function App() {
     );
 
     // Add success message in Advisor chat
-    const rechargeChatMsg: ChatMessage = {
-      id: `recharge_${Date.now()}`,
-      role: "assistant",
-      text: `🎉 **Recharge de ${addedKwh.toFixed(1)} kWh activée !**\n\nVotre compteur intelligent a bien enregistré le jeton de recharge. Votre solde est désormais de **${(balanceKwh + addedKwh).toFixed(2)} kWh**.\n\n*Merci de soutenir l'énergie 100% hydroélectrique de Virunga Energies ! Grâce à cette recharge, vous évitez le recours au charbon 'makala' et aidez à préserver l'habitat des gorilles du Kivu.* 🦍🌳`,
-      timestamp: new Date().toLocaleTimeString("fr-FR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
+    const rechargeChatMsg = createChatMessage(
+      "assistant",
+      `🎉 **Recharge de ${addedKwh.toFixed(1)} kWh activée !**\n\nVotre compteur intelligent a bien enregistré le jeton de recharge. Votre solde est désormais de **${(balanceKwh + addedKwh).toFixed(2)} kWh**.\n\n*Merci de soutenir l'énergie 100% hydroélectrique de Virunga Energies ! Grâce à cette recharge, vous évitez le recours au charbon 'makala' et aidez à préserver l'habitat des gorilles du Kivu.* 🦍🌳`,
+      "recharge",
+    );
     setChatMessages((prev) => [...prev, rechargeChatMsg]);
 
     setTimeout(() => setManualTokenSuccess(false), 5000);
@@ -1079,7 +947,7 @@ export default function App() {
 
   const handleManualTokenSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanToken = manualTokenInput.replace(/\s+/g, "").replace(/-/g, "");
+    const cleanToken = stripTokenSeparators(manualTokenInput);
 
     if (cleanToken.length !== 20 || isNaN(Number(cleanToken))) {
       setManualTokenError(
@@ -1090,7 +958,7 @@ export default function App() {
 
     // Check if already used
     const isUsed = tokenHistory.find(
-      (t) => t.token.replace(/-/g, "") === cleanToken && t.applied,
+      (t) => stripTokenSeparators(t.token) === cleanToken && t.applied,
     );
     if (isUsed) {
       setManualTokenError(
@@ -1109,14 +977,10 @@ export default function App() {
     // Add to history
     const manualTx: TokenHistory = {
       id: `manual_${Date.now()}`,
-      date: new Date().toLocaleString("fr-FR", {
-        hour: "2-digit",
-        minute: "2-digit",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }),
-      amountUsd: parseFloat((randomKwh * selectedTariff.usdPerKwh).toFixed(2)),
+      date: formatDateTime(),
+      amountUsd: parseFloat(
+        kwhToUsd(randomKwh, selectedTariff.usdPerKwh).toFixed(2),
+      ),
       kwh: randomKwh,
       token: cleanFormatted,
       operator: "Compteur Manuel",
@@ -1136,15 +1000,11 @@ export default function App() {
       "recharge",
     );
 
-    const rechargeChatMsg: ChatMessage = {
-      id: `manual_recharge_${Date.now()}`,
-      role: "assistant",
-      text: `🔌 **Jeton manuel de ${randomKwh} kWh activé !**\n\nVotre nouveau solde est de **${(balanceKwh + randomKwh).toFixed(2)} kWh**. Le délestage automatique est de nouveau en veille.`,
-      timestamp: new Date().toLocaleTimeString("fr-FR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
+    const rechargeChatMsg = createChatMessage(
+      "assistant",
+      `🔌 **Jeton manuel de ${randomKwh} kWh activé !**\n\nVotre nouveau solde est de **${(balanceKwh + randomKwh).toFixed(2)} kWh**. Le délestage automatique est de nouveau en veille.`,
+      "manual_recharge",
+    );
     setChatMessages((prev) => [...prev, rechargeChatMsg]);
 
     setTimeout(() => setManualTokenSuccess(false), 5000);
@@ -1156,15 +1016,7 @@ export default function App() {
     if (!finalPrompt.trim()) return;
 
     // Add user message immediately
-    const userMsg: ChatMessage = {
-      id: `user_${Date.now()}`,
-      role: "user",
-      text: finalPrompt,
-      timestamp: new Date().toLocaleTimeString("fr-FR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
+    const userMsg = createChatMessage("user", finalPrompt, "user");
 
     setChatMessages((prev) => [...prev, userMsg]);
     if (!textPrompt) setChatInput("");
@@ -1202,28 +1054,16 @@ export default function App() {
         throw new Error(data.details || data.error);
       }
 
-      const aiMsg: ChatMessage = {
-        id: `ai_${Date.now()}`,
-        role: "assistant",
-        text: data.text,
-        timestamp: new Date().toLocaleTimeString("fr-FR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      };
+      const aiMsg = createChatMessage("assistant", data.text, "ai");
 
       setChatMessages((prev) => [...prev, aiMsg]);
     } catch (error: any) {
       console.error("Failed to connect to Gemini API on server:", error);
-      const errorMsg: ChatMessage = {
-        id: `err_${Date.now()}`,
-        role: "assistant",
-        text: "Désolé, je rencontre une difficulté temporaire de connexion à mon cerveau artificiel Gemini. Veuillez réessayer.\n\n💡 *Conseil Éco-Minute :* Saviez-vous que repasser vos vêtements d'un coup consomme beaucoup moins de kWh que de chauffer le fer plusieurs fois par semaine ? C'est le 'repassage groupé' !",
-        timestamp: new Date().toLocaleTimeString("fr-FR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      };
+      const errorMsg = createChatMessage(
+        "assistant",
+        "Désolé, je rencontre une difficulté temporaire de connexion à mon cerveau artificiel Gemini. Veuillez réessayer.\n\n💡 *Conseil Éco-Minute :* Saviez-vous que repasser vos vêtements d'un coup consomme beaucoup moins de kWh que de chauffer le fer plusieurs fois par semaine ? C'est le 'repassage groupé' !",
+        "err",
+      );
       setChatMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsAiLoading(false);
@@ -1612,7 +1452,7 @@ export default function App() {
                   <div>
                     <span className="text-slate-500 block">Solde USD</span>
                     <strong className="text-slate-200">
-                      ${(balanceKwh * selectedTariff.usdPerKwh).toFixed(2)}
+                      ${kwhToUsd(balanceKwh, selectedTariff.usdPerKwh).toFixed(2)}
                     </strong>
                   </div>
                   <div className="text-right">
@@ -2328,9 +2168,9 @@ export default function App() {
                         </span>
                         <span className="text-[9px] font-mono text-slate-500">
                           ~
-                          {(
-                            (app.watts * selectedTariff.usdPerKwh) /
-                            1000
+                          {kwhToUsd(
+                            app.watts / 1000,
+                            selectedTariff.usdPerKwh,
                           ).toFixed(4)}
                           $/h
                         </span>
@@ -2495,10 +2335,9 @@ export default function App() {
                   <div className="flex justify-between mb-1.5">
                     <span className="text-slate-400">Jeton estimé :</span>
                     <strong className="text-emerald-400 font-mono">
-                      {(
-                        (rechargeAmountUsd ||
-                          parseFloat(customAmountUsd) ||
-                          0) / selectedTariff.usdPerKwh
+                      {usdToKwh(
+                        rechargeAmountUsd || parseFloat(customAmountUsd) || 0,
+                        selectedTariff.usdPerKwh,
                       ).toFixed(1)}{" "}
                       kWh
                     </strong>
@@ -2803,7 +2642,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={(e) => handleManualTokenSubmit(e as any)}
-                disabled={manualTokenInput.replace(/\D/g, "").length < 20}
+                disabled={onlyDigits(manualTokenInput).length < 20}
                 className="w-full mt-3 bg-gradient-to-r from-emerald-500 to-teal-500 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 hover:brightness-110 text-slate-950 h-11 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20"
               >
                 <CheckCircle className="h-4 w-4" /> Entrer (Valider Jeton)
@@ -2963,10 +2802,7 @@ export default function App() {
                     id: "welcome",
                     role: "assistant",
                     text: "Bonjour ! Comment puis-je vous aider aujourd'hui avec votre compteur Cashpower ?",
-                    timestamp: new Date().toLocaleTimeString("fr-FR", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    }),
+                    timestamp: formatTime(),
                   },
                 ]);
               }}
