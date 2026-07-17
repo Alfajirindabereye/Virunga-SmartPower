@@ -212,7 +212,16 @@ export default function App() {
       if (event.target?.result) {
         setTempIdCardUrl(event.target.result as string);
         setTempIdCardName(file.name);
+      } else {
+        alert(
+          "Impossible de lire l'image de la carte d'identité (fichier vide ou corrompu). Veuillez réessayer.",
+        );
       }
+    };
+    reader.onerror = () => {
+      alert(
+        "Échec de la lecture de l'image de la carte d'identité. Veuillez réessayer avec un autre fichier.",
+      );
     };
     reader.readAsDataURL(file);
   };
@@ -664,23 +673,32 @@ export default function App() {
           `,
         }),
       });
-      const data = await response.json();
-      if (data.success) {
-        console.log(
-          "[Gmail Alert Status] Sent successfully. Simulated:",
-          data.simulated,
-        );
-        addNotification(
-          "info",
-          data.simulated
-            ? "📧 Alerte Gmail (Simulée)"
-            : "📧 Alerte Gmail (Réelle)",
-          `Notification de solde critique envoyée à ${profileEmail}. ${data.simulated ? "(Consultez les logs de votre console VS Code pour voir l'e-mail)" : "(Envoyé via SMTP)"}`,
-          "system",
+      const data = await response.json().catch(() => ({}) as any);
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.details || data.error || `Le serveur a répondu avec le statut ${response.status}`,
         );
       }
+      console.log(
+        "[Gmail Alert Status] Sent successfully. Simulated:",
+        data.simulated,
+      );
+      addNotification(
+        "info",
+        data.simulated
+          ? "📧 Alerte Gmail (Simulée)"
+          : "📧 Alerte Gmail (Réelle)",
+        `Notification de solde critique envoyée à ${profileEmail}. ${data.simulated ? "(Consultez les logs de votre console VS Code pour voir l'e-mail)" : "(Envoyé via SMTP)"}`,
+        "system",
+      );
     } catch (err) {
       console.error("[Gmail Alert Status] Error during fetch sending:", err);
+      addNotification(
+        "warning",
+        "📧 Échec de l'envoi de l'alerte e-mail",
+        `Impossible d'envoyer l'e-mail d'alerte à ${profileEmail}. Vérifiez votre connexion internet ou la configuration SMTP. Détail : ${err instanceof Error ? err.message : String(err)}`,
+        "system",
+      );
     }
   };
 
@@ -750,7 +768,11 @@ export default function App() {
     async function loadSavedState() {
       try {
         const res = await fetch("/api/state");
-        if (res.ok) {
+        if (!res.ok) {
+          console.warn(
+            `Failed to load initial state: server responded with status ${res.status}. Falling back to defaults.`,
+          );
+        } else {
           const data = await res.json();
           if (data && Object.keys(data).length > 0) {
             if (typeof data.balanceKwh === "number")
@@ -794,11 +816,14 @@ export default function App() {
     loadSavedState();
   }, []);
 
-  // Save state to our JSON database whenever critical variables change
+  // Save state to our JSON database whenever critical variables change.
+  // Guard so a persistent save failure notifies the user only once (adding a
+  // notification mutates state and would otherwise re-trigger this effect).
+  const saveErrorNotifiedRef = useRef(false);
   useEffect(() => {
     const timeout = setTimeout(async () => {
       try {
-        await fetch("/api/state", {
+        const res = await fetch("/api/state", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -822,8 +847,21 @@ export default function App() {
             gmailAlertsEnabled,
           }),
         });
+        if (!res.ok) {
+          throw new Error(`Le serveur a répondu avec le statut ${res.status}`);
+        }
+        saveErrorNotifiedRef.current = false;
       } catch (err) {
-        console.warn("Failed to save state to database.json:", err);
+        console.error("Failed to save state to database.json:", err);
+        if (!saveErrorNotifiedRef.current) {
+          saveErrorNotifiedRef.current = true;
+          addNotification(
+            "warning",
+            "💾 Échec de la sauvegarde",
+            "Vos dernières modifications n'ont pas pu être enregistrées dans la base de données. Elles pourraient être perdues au rechargement de la page.",
+            "system",
+          );
+        }
       }
     }, 1000); // Debounce saves by 1s to prevent spamming during high-frequency changes
 
@@ -2624,8 +2662,16 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-2 w-full text-xs">
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(generatedToken);
-                      alert("Jeton copié dans le presse-papier !");
+                      navigator.clipboard
+                        .writeText(generatedToken)
+                        .then(() => {
+                          alert("Jeton copié dans le presse-papier !");
+                        })
+                        .catch(() => {
+                          alert(
+                            "Impossible de copier le jeton automatiquement. Veuillez le copier manuellement.",
+                          );
+                        });
                     }}
                     className="border border-slate-800 hover:border-slate-700 hover:bg-slate-850 py-2 rounded-lg text-slate-300 transition"
                   >
